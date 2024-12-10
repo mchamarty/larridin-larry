@@ -12,137 +12,116 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
 export type Profile = {
   id: string;
   linkedin_url: string;
-  linkedin_data: Record<string, any>; // Explicit type for flexibility
-  created_at: string;
-  best_practices_source?: string;
-};
-
-// Define the QuestionResponse type
-export type QuestionResponse = {
-  id: string;
-  profile_id: string;
-  question_id: string;
-  answer: string;
+  linkedin_data: Record<string, any>;
   created_at: string;
 };
 
 // Define the Task type
 export type Task = {
+  metadata: any;
   id: string;
   profile_id: string;
-  title: string;
+  title: string; // Added
   description: string;
-  status: 'pending' | 'completed' | 'skipped';
-  feedback?: string;
+  due_date: string; // Added
+  notes: string; // Added
+  expected_outcome: string;
+  strategic_importance: string;
+  time_estimate: string;
+  type: string;
+  status: string;
   created_at: string;
-  due_date?: string;
-  metadata: {
-    expected_outcome: string;
-    strategic_importance: string;
-    time_estimate: string;
-    category: 'strategic' | 'operational' | 'relational' | 'growth';
-    shareable_text: string;
-  };
-  notes?: string;
-  is_new?: boolean;
+  updated_at: string;
 };
 
-// Define the Insight type
-export type Insight = {
-  id: string;
-  profile_id: string;
-  question_id: string;
+// Define the QuestionResponse type
+export type QuestionResponse = {
+  question: string;
   answer: string;
-  created_at: string;
 };
 
-// Define the Question type
-export type Question = {
-  id: string;
-  text: string;
-  subtext: string;
-  options: string[];
-};
-
-// Define the PreGeneratedQuestion type
-export type PreGeneratedQuestion = {
-  id: string;
-  profile_id: string;
-  text: string;
-  subtext: string;
-  options: string[];
-};
-
-// Define the Database schema
-export type Database = {
-  public: {
-    Tables: {
-      profiles: {
-        Row: Profile;
-        Insert: Omit<Profile, 'id' | 'created_at'>;
-        Update: Partial<Omit<Profile, 'id' | 'created_at'>>;
-      };
-      tasks: {
-        Row: Task;
-        Insert: Omit<Task, 'id' | 'created_at'>;
-        Update: Partial<Omit<Task, 'id' | 'created_at'>>;
-      };
-      question_responses: {
-        Row: QuestionResponse;
-        Insert: Omit<QuestionResponse, 'id' | 'created_at'>;
-        Update: Partial<Omit<QuestionResponse, 'id' | 'created_at'>>;
-      };
-      insights: {
-        Row: Insight;
-        Insert: Omit<Insight, 'id' | 'created_at'>;
-        Update: Partial<Omit<Insight, 'id' | 'created_at'>>;
-      };
-      questions: {
-        Row: Question;
-        Insert: Omit<Question, 'id'>;
-        Update: Partial<Question>;
-      };
-      pre_generated_questions: {
-        Row: PreGeneratedQuestion;
-        Insert: Omit<PreGeneratedQuestion, 'id'>;
-        Update: Partial<Omit<PreGeneratedQuestion, 'id'>>;
-      };
-    };
-    Views: {
-      [_ in never]: never;
-    };
-    Functions: {
-      create_questions_table: {
-        Args: Record<string, never>;
-        Returns: void;
-      };
-    };
-    Enums: {
-      [_ in never]: never;
-    };
-  };
-};
-
-// Create Supabase client with explicit types for better type safety and optimized configuration
-export const supabase = createClient<Database>(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  {
-    auth: {
-      autoRefreshToken: true,
-      persistSession: true  // Changed from false to true
-    },
-    global: {
-      headers: { 'x-my-custom-header': 'my-app-name' }
-    },
-    db: {
-      schema: 'public'
-    },
-    realtime: {
-      params: {
-        eventsPerSecond: 2
-      }
-    }
-  }
+// Supabase client instance
+export const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
+// Fetch tasks for a specific profile
+export const fetchTasks = async (profileId: string): Promise<Task[]> => {
+  try {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('profile_id', profileId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching tasks:', error);
+      throw new Error('Failed to fetch tasks');
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    throw error;
+  }
+};
+
+// Insert a new task
+export const insertTask = async (task: Partial<Task>): Promise<Task> => {
+  try {
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert(task)
+      .single();
+
+    if (error) {
+      console.error('Error inserting task:', error);
+      throw new Error('Failed to insert task');
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    throw error;
+  }
+};
+
+// Update an existing task
+export const updateTask = async (taskId: string, updates: Partial<Task>): Promise<Task> => {
+  try {
+    const { data, error } = await supabase
+      .from('tasks')
+      .update(updates)
+      .eq('id', taskId)
+      .single();
+
+    if (error) {
+      console.error('Error updating task:', error);
+      throw new Error('Failed to update task');
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    throw error;
+  }
+};
+
+// Delete a task
+export const deleteTask = async (taskId: string): Promise<void> => {
+  try {
+    const { error } = await supabase
+      .from('tasks')
+      .delete()
+      .eq('id', taskId);
+
+    if (error) {
+      console.error('Error deleting task:', error);
+      throw new Error('Failed to delete task');
+    }
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    throw error;
+  }
+};

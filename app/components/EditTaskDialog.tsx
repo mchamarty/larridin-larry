@@ -32,7 +32,7 @@ export function EditTaskDialog({ task, open, onOpenChange, onSave }: EditTaskDia
       ...task,
       title,
       description,
-      due_date: dueDate ? dueDate.toISOString() : undefined,
+      due_date: dueDate ? dueDate.toISOString() : '', // Default to empty string if null
       notes,
     };
     onSave(updatedTask);
@@ -115,4 +115,3 @@ export function EditTaskDialog({ task, open, onOpenChange, onSave }: EditTaskDia
     </Dialog>
   );
 }
-

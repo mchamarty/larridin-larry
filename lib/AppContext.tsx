@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { supabase } from './supabase';
-import type { Task } from './supabase';
+import { Task } from './supabase'; // Ensure Task type is correctly imported
 
+// Define AppContextType to include all required properties
 interface AppContextType {
   tasks: Task[];
   setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
@@ -11,11 +11,12 @@ interface AppContextType {
   setError: React.Dispatch<React.SetStateAction<string | null>>;
   profileId: string | null;
   setProfileId: React.Dispatch<React.SetStateAction<string | null>>;
-  selectedBestPractices: string[];
-  setSelectedBestPractices: React.Dispatch<React.SetStateAction<string[]>>;
   fetchTasks: (id: string) => Promise<void>;
+  callClaudeAPI: (endpoint: string, payload: any) => Promise<any>;
   activeTab: string;
   setActiveTab: React.Dispatch<React.SetStateAction<string>>;
+  selectedBestPractices: string[];
+  setSelectedBestPractices: React.Dispatch<React.SetStateAction<string[]>>;
   showSwitchProfileDialog: boolean;
   setShowSwitchProfileDialog: React.Dispatch<React.SetStateAction<boolean>>;
 }
@@ -24,7 +25,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const useAppContext = () => {
   const context = useContext(AppContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useAppContext must be used within an AppProvider');
   }
   return context;
@@ -35,38 +36,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
-  const [selectedBestPractices, setSelectedBestPractices] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState('tasks');
+  const [selectedBestPractices, setSelectedBestPractices] = useState<string[]>([]);
   const [showSwitchProfileDialog, setShowSwitchProfileDialog] = useState(false);
 
   const fetchTasks = useCallback(async (id: string) => {
-    if (!id) {
-      console.error('Profile ID is null or invalid.');
-      return;
-    }
+    if (!id) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      console.log('Fetching tasks for profile:', id);
-      const { data, error } = await supabase
-        .from('tasks')
-        .select('*')
-        .eq('profile_id', id)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      console.log('Fetched tasks:', data);
+      const response = await fetch(`/api/fetch-tasks?id=${id}`);
+      if (!response.ok) throw new Error('Failed to fetch tasks');
+      const data = await response.json();
       setTasks(data || []);
     } catch (err) {
       console.error('Error fetching tasks:', err);
       setError('Failed to load tasks. Please try again.');
-      setTasks([]);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const callClaudeAPI = async (endpoint: string, payload: any) => {
+    try {
+      const response = await fetch(`/api/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) throw new Error('API call failed');
+      return await response.json();
+    } catch (error) {
+      console.error('Claude API Error:', error);
+      throw error;
+    }
+  };
 
   return (
     <AppContext.Provider
@@ -79,11 +85,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setError,
         profileId,
         setProfileId,
-        selectedBestPractices,
-        setSelectedBestPractices,
         fetchTasks,
+        callClaudeAPI,
         activeTab,
         setActiveTab,
+        selectedBestPractices,
+        setSelectedBestPractices,
         showSwitchProfileDialog,
         setShowSwitchProfileDialog,
       }}

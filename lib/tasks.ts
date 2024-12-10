@@ -25,17 +25,17 @@ ${prompt}
 
 Format:
 {
-"tasks": [
-{
-"title": "Brief task name",
-"description": "Clear directive",
-"expected_outcome": "Success metric",
-"strategic_importance": "Key impact", 
-"time_estimate": "Duration",
-"category": "strategic|operational|relational|growth",
-"shareable_text": "A brief few sentences outlining how this task is valuable and interesting, providing professional rationale for sharing with team, customers, or superiors."
-}
-]
+  "tasks": [
+    {
+      "title": "Brief task name",
+      "description": "Clear directive",
+      "expected_outcome": "Success metric",
+      "strategic_importance": "Key impact",
+      "time_estimate": "Duration",
+      "category": "strategic|operational|relational|growth",
+      "shareable_text": "A brief professional rationale."
+    }
+  ]
 }`,
           },
         ],
@@ -51,20 +51,14 @@ Format:
     const data = await response.json();
     console.log('Claude API response:', data);
 
-    const textContent = data.content?.find((item: any) => item.type === 'text')?.text;
+    const textContent = data.completion;
 
     if (!textContent) {
       console.error('No valid text content received from Claude.');
       throw new Error('No valid text content received from Claude');
     }
 
-    let parsedResponse;
-    try {
-      parsedResponse = JSON.parse(textContent);
-    } catch (parseError) {
-      console.error('Failed to parse JSON from Claude response:', textContent, parseError);
-      throw new Error('Failed to parse JSON from Claude response');
-    }
+    const parsedResponse = JSON.parse(textContent);
 
     if (!parsedResponse.tasks || !Array.isArray(parsedResponse.tasks)) {
       console.error('Unexpected tasks format received from Claude:', parsedResponse);
@@ -79,14 +73,6 @@ Format:
 }
 
 export async function generateTasks(profileId: string, bestPractices?: string[]) {
-  //const cacheKey = `tasks_${profileId}_${bestPractices?.join('_') || ''}`;
-  //const cachedTasks = cache.get(cacheKey);
-
-  //if (cachedTasks) {
-  //  console.log('Returning cached tasks');
-  //  return cachedTasks;
-  //}
-
   console.log('Generating new tasks for profile ID:', profileId);
 
   try {
@@ -101,8 +87,6 @@ export async function generateTasks(profileId: string, bestPractices?: string[])
       throw new Error(`Profile not found for ID: ${profileId}`);
     }
 
-    console.log('Fetched profile data:', profile);
-
     const { data: responses, error: responsesError } = await supabase
       .from('question_responses')
       .select('*')
@@ -110,10 +94,7 @@ export async function generateTasks(profileId: string, bestPractices?: string[])
 
     if (responsesError) {
       console.error('Error fetching responses:', responsesError);
-      console.log('Continuing with empty responses');
     }
-
-    console.log('Fetched responses:', responses || []);
 
     const { data: tasks, error: tasksError } = await supabase
       .from('tasks')
@@ -122,14 +103,11 @@ export async function generateTasks(profileId: string, bestPractices?: string[])
 
     if (tasksError) {
       console.error('Error fetching tasks:', tasksError);
-      console.log('Continuing without previous tasks feedback');
     }
 
-    const taskFeedback = tasks?.map(task => 
-      `Task: ${task.title}
-       Feedback: ${task.feedback || 'none'}`
-    ).join('\n') || 'No previous task feedback';
-
+    const taskFeedback = tasks
+      ?.map((task) => `Task: ${task.title}\nFeedback: ${task.feedback || 'none'}`)
+      .join('\n') || 'No previous task feedback';
 
     const profileData = profile.linkedin_data.profile;
     const activities = profile.linkedin_data.activities;
@@ -144,7 +122,7 @@ export async function generateTasks(profileId: string, bestPractices?: string[])
       Company Size: ${profileData?.company?.employeeCount || 'Not specified'}
       Activities: ${activities?.posts?.slice(0, 3).map((p: any) => p.text).join(' | ') || 'None'}
       Previous Task Feedback: ${taskFeedback}
-      Responses: ${responses ? responses.map((r: QuestionResponse) => `${r.question_id}: ${r.answer}`).join('\n') : 'None'}
+      Responses: ${responses ? responses.map((r: QuestionResponse) => `${r.question}: ${r.answer}`).join('\n') : 'None'}
       ${bestPracticesText}
     `;
 
@@ -157,18 +135,22 @@ export async function generateTasks(profileId: string, bestPractices?: string[])
       profile_id: profileId,
       title: task.title,
       description: task.description,
+      due_date: task.due_date || '', // Provide fallback for due_date
+      notes: task.notes || '', // Provide fallback for notes
+      expected_outcome: task.expected_outcome || '', // Ensure required properties are defined
+      strategic_importance: task.strategic_importance || '',
+      time_estimate: task.time_estimate || '',
       metadata: {
-        expected_outcome: task.expected_outcome,
-        strategic_importance: task.strategic_importance,
-        time_estimate: task.time_estimate,
         category: task.category as 'strategic' | 'operational' | 'relational' | 'growth',
         shareable_text: task.shareable_text,
       },
-      status: 'pending' as const,
-      is_new: true, 
+      status: 'pending',
+      is_new: true,
+      type: task.type || 'default', // Provide a default or task-specific type
+      updated_at: new Date().toISOString(), // Set the current timestamp as `updated_at`
     }));
+    
 
-    console.log('Formatted tasks for insertion:', formattedTasks);
 
     const { data: insertedTasks, error: insertError } = await supabase
       .from('tasks')
@@ -181,11 +163,9 @@ export async function generateTasks(profileId: string, bestPractices?: string[])
     }
 
     console.log('Successfully inserted tasks into database:', insertedTasks);
-    //cache.set(cacheKey, insertedTasks);
     return insertedTasks;
   } catch (error) {
     console.error('Error in generateTasks:', error);
     throw error;
   }
 }
-
