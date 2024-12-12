@@ -72,7 +72,7 @@ export default function QuestionnairePage() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4">
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8">Let's get to know you better</h1>
+        <h1 className="text-3xl font-bold mb-8">Lets get to know you better</h1>
         <Questionnaire 
           profileId={profile.id}
           onComplete={handleQuestionnaireComplete}
