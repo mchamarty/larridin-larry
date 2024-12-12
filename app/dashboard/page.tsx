@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TasksView } from '../components/TasksView';
@@ -32,6 +32,9 @@ function DashboardContent() {
     showSwitchProfileDialog,
     setShowSwitchProfileDialog,
     fetchTasks,
+    setTasks,
+    setLoading,
+    setError,
   } = useAppContext();
 
   useEffect(() => {
@@ -43,9 +46,13 @@ function DashboardContent() {
     }
   }, [searchParams, profileId, setProfileId, fetchTasks]);
 
-  const handleTabChange = (value: string) => {
+  const handleTabChange = useCallback((value: string) => {
     setActiveTab(value);
-  };
+  }, [setActiveTab]);
+
+  const handleSwitchProfile = useCallback(() => {
+    window.location.href = '/';
+  }, []);
 
   if (!profileId) {
     return <p className="text-center text-red-500">Profile ID is missing from the URL.</p>;
@@ -111,9 +118,7 @@ function DashboardContent() {
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={() => {
-                window.location.href = '/';
-              }}>Confirm</AlertDialogAction>
+              <AlertDialogAction onClick={handleSwitchProfile}>Confirm</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

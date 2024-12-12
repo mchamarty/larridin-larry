@@ -4,7 +4,9 @@ import { generateTasks } from '@/lib/tasks';
 
 console.log('Environment check:', {
   hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-  keyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 5)
+  keyPrefix: process.env.ANTHROPIC_API_KEY?.substring(0, 5),
+  hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+  hasSupabaseAnonKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 });
 
 export async function GET(request: Request) {
@@ -12,13 +14,25 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const profileId = searchParams.get('id');
 
-    console.log('Fetching tasks for profile:', profileId);
+    console.log('[fetch-tasks] Request received for profile:', profileId);
 
     if (!profileId) {
-      return NextResponse.json({ error: 'Profile ID required' }, { status: 400 });
+      console.error('[fetch-tasks] Missing profile ID');
+      return NextResponse.json({ error: 'Profile ID is required' }, { status: 400 });
     }
 
-    // Check Supabase first
+    // Check for required environment variables
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      console.error('[fetch-tasks] Missing Supabase environment variables');
+      return NextResponse.json({ error: 'Database configuration is missing' }, { status: 500 });
+    }
+
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.error('[fetch-tasks] Missing Anthropic API key');
+      return NextResponse.json({ error: 'AI service configuration is missing' }, { status: 500 });
+    }
+
+    console.log('[fetch-tasks] Fetching tasks from Supabase');
     const { data: tasks, error: fetchError } = await supabase
       .from('tasks')
       .select('*')
@@ -26,34 +40,33 @@ export async function GET(request: Request) {
       .order('created_at', { ascending: false });
 
     if (fetchError) {
-      console.error('Supabase error:', fetchError);
-      return NextResponse.json({ error: fetchError.message }, { status: 500 });
+      console.error('[fetch-tasks] Supabase error:', fetchError);
+      return NextResponse.json({ error: 'Failed to fetch tasks from database' }, { status: 500 });
     }
 
-    // If no tasks exist, try to generate new ones
     if (!tasks || tasks.length === 0) {
-      if (!process.env.ANTHROPIC_API_KEY) {
-        return NextResponse.json({ error: 'API key not configured' }, { status: 500 });
-      }
-
+      console.log('[fetch-tasks] No existing tasks found, generating new ones');
       try {
-        console.log('Generating new tasks...');
         const newTasks = await generateTasks(profileId);
+        console.log('[fetch-tasks] Successfully generated new tasks:', newTasks.length);
         return NextResponse.json(newTasks);
       } catch (genError) {
-        console.error('Task generation error:', genError);
-        return NextResponse.json({ 
-          error: genError instanceof Error ? genError.message : 'Task generation failed' 
-        }, { status: 500 });
+        console.error('[fetch-tasks] Task generation error:', genError);
+        return NextResponse.json(
+          { error: genError instanceof Error ? genError.message : 'Failed to generate new tasks' },
+          { status: 500 }
+        );
       }
     }
 
+    console.log('[fetch-tasks] Successfully retrieved tasks:', tasks.length);
     return NextResponse.json(tasks);
   } catch (error) {
-    console.error('Fetch tasks error:', error);
-    return NextResponse.json({ 
-      error: error instanceof Error ? error.message : 'Server error' 
-    }, { status: 500 });
+    console.error('[fetch-tasks] Unexpected error:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'An unexpected error occurred' },
+      { status: 500 }
+    );
   }
 }
 
