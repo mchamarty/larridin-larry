@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { questions, type Question } from '@/lib/questions'
+import { predefinedQuestions as questions, type Question } from '@/lib/questions'
 import { supabase } from '@/lib/supabase'
 import { Loader2, ArrowRight, CheckCircle } from 'lucide-react'
 
@@ -24,14 +24,12 @@ export function Questionnaire({ profileId, onComplete }: QuestionnaireProps) {
     setLoading(true)
     
     try {
-      // Store answer in Supabase
       await supabase.from('responses').insert({
         profile_id: profileId,
         question_id: questionId,
         answer
       })
 
-      // Update local state
       setAnswers(prev => ({
         ...prev,
         [questionId]: answer
@@ -71,9 +69,9 @@ export function Questionnaire({ profileId, onComplete }: QuestionnaireProps) {
 
         <h3 className="text-lg mb-6">{currentQuestion.text}</h3>
 
-        {currentQuestion.type === 'multiple-choice' ? (
+        {currentQuestion.type === 'multiple-choice' && currentQuestion.options ? (
           <div className="space-y-3">
-            {currentQuestion.options?.map((option) => (
+            {currentQuestion.options.map((option: string) => (
               <button
                 key={option}
                 onClick={() => handleAnswer(currentQuestion.id, option)}

@@ -10,12 +10,10 @@ import { useAppContext } from '@/lib/AppContext';
 import { useToast } from "@/components/ui/use-toast";
 import { useRouter } from 'next/navigation';
 import { generateTasks } from '@/lib/tasks';
+import { generateQuestions, Question as BaseQuestion, QuestionResponse } from '@/lib/questions';
 
-interface Question {
+interface Question extends BaseQuestion {
   id: string;
-  text: string;
-  subtext: string;
-  options: string[];
 }
 
 export function InsightsView() {
@@ -32,6 +30,18 @@ export function InsightsView() {
   const [isGeneratingTasks, setIsGeneratingTasks] = useState(false);
   const [progress, setProgress] = useState(0);
   const [answeredQuestionIds, setAnsweredQuestionIds] = useState<string[]>([]);
+
+  const fetchProgress = async () => {
+    if (!profileId) return;
+    try {
+      const response = await fetch(`/api/insights/progress?profileId=${profileId}`);
+      if (!response.ok) throw new Error('Failed to fetch progress');
+      const data = await response.json();
+      setAnsweredQuestionIds(data.answeredQuestionIds);
+    } catch (error) {
+      console.error('Error fetching progress:', error);
+    }
+  };
 
   useEffect(() => {
     const fetchQuestionsAndProgress = async () => {
@@ -98,7 +108,6 @@ export function InsightsView() {
         const nextSetStart = (currentSetIndex + 1) * 5;
         setCurrentSet(allQuestions.slice(nextSetStart, nextSetStart + 5));
       } else {
-        // All questions answered
         handleAllQuestionsAnswered();
       }
     } catch (err) {
@@ -166,43 +175,24 @@ export function InsightsView() {
         body: JSON.stringify({ profileId })
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      const data: QuestionResponse = await response.json();
+
+      if (!response.ok || data.error) {
+        throw new Error(data.error || 'Failed to load questions');
       }
 
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      if (data.success && data.questions) {
-        setAllQuestions(data.questions);
-        setCurrentSet(data.questions.slice(0, 5));
+      if (data.questions && data.questions.length > 0) {
+        setAllQuestions(data.questions as Question[]);
+        setCurrentSet(data.questions.slice(0, 5) as Question[]);
         setError(null);
       } else {
-        throw new Error('Invalid response format');
+        throw new Error('No questions received');
       }
-    } catch (err: unknown) {
-      console.error('Error loading questions:', err);
+    } catch (err) {
+      console.error('Error:', err);
       setError(`Failed to load questions: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const fetchProgress = async () => {
-    if (!profileId) return;
-
-    try {
-      const response = await fetch(`/api/insights/progress?profileId=${profileId}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch progress');
-      }
-      const data = await response.json();
-      setAnsweredQuestionIds(data.answeredQuestionIds);
-    } catch (error) {
-      console.error('Error fetching progress:', error);
     }
   };
 
@@ -225,7 +215,7 @@ export function InsightsView() {
         throw new Error(data.error);
       }
 
-      if (data.success && data.questions) {
+      if (data.questions) {
         setAllQuestions(data.questions);
         setCurrentSet(data.questions.slice(0, 5));
         setCurrentSetIndex(0);
@@ -241,7 +231,6 @@ export function InsightsView() {
       setLoading(false);
     }
   };
-
 
   if (loading) {
     return (
@@ -279,7 +268,7 @@ export function InsightsView() {
           <p className="text-gray-600 mb-6">{currentQuestion.subtext}</p>
 
           <div className="space-y-3">
-            {currentQuestion.options.map((option, index) => (
+            {currentQuestion.options?.map((option, index) => (
               <Button
                 key={index}
                 variant="outline"
@@ -328,4 +317,3 @@ export function InsightsView() {
     </Card>
   );
 }
-
