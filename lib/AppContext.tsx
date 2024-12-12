@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { Task } from './supabase'; // Ensure Task type is correctly imported
 
-// Define AppContextType to include all required properties
 interface AppContextType {
   tasks: Task[];
   setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
@@ -47,17 +46,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setError(null);
 
     try {
-      const response = await fetch(`/api/fetch-tasks?id=${id}`);
-      if (!response.ok) throw new Error('Failed to fetch tasks');
-      const data = await response.json();
-      setTasks(data || []);
+        const response = await fetch(`/api/fetch-tasks?id=${id}`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to fetch tasks');
+        }
+
+        if (!Array.isArray(data)) {
+            throw new Error('Invalid data format from API');
+        }
+
+        setTasks(data);
     } catch (err) {
-      console.error('Error fetching tasks:', err);
-      setError('Failed to load tasks. Please try again.');
+        console.error('Error fetching tasks:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load tasks');
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  }, []);
+}, []);
 
   const callClaudeAPI = async (endpoint: string, payload: any) => {
     try {
@@ -66,7 +73,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!response.ok) throw new Error('API call failed');
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API call failed: ${errorText}`);
+      }
       return await response.json();
     } catch (error) {
       console.error('Claude API Error:', error);

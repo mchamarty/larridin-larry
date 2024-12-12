@@ -40,8 +40,6 @@ function DashboardContent() {
       console.log('Setting profile ID:', id);
       setProfileId(id);
       fetchTasks(id);
-    } else if (!id) {
-      console.error('Profile ID is missing from the URL.');
     }
   }, [searchParams, profileId, setProfileId, fetchTasks]);
 
@@ -49,17 +47,12 @@ function DashboardContent() {
     setActiveTab(value);
   };
 
-  if (!profileId && !loading) {
+  if (!profileId) {
     return <p className="text-center text-red-500">Profile ID is missing from the URL.</p>;
   }
 
   if (error) {
-    return (
-      <div className="text-center py-8">
-        <p className="text-red-500 mb-4">{error}</p>
-        <Button onClick={() => window.location.reload()}>Try Again</Button>
-      </div>
-    );
+    return <p className="text-center text-red-500">{error}</p>;
   }
 
   return (
@@ -72,10 +65,7 @@ function DashboardContent() {
 
         {loading && (
           <div className="fixed inset-0 bg-background/50 flex items-center justify-center z-50">
-            <div className="text-center">
-              <Loader2 className="w-12 h-12 animate-spin text-blue-500 mb-4" />
-              <p className="text-sm text-gray-700">Analyzing your profile and loading tasks...</p>
-            </div>
+            <Loader2 className="w-8 h-8 animate-spin" />
           </div>
         )}
 
@@ -131,3 +121,4 @@ function DashboardContent() {
     </div>
   );
 }
+

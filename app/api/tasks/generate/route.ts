@@ -3,8 +3,17 @@ import { generateTasks } from '@/lib/tasks';
 
 export async function POST(request: Request) {
   try {
+    let profileId: string | null;
+
+    // Check if profileId is in the URL params
     const { searchParams } = new URL(request.url);
-    const profileId = searchParams.get('profileId');
+    profileId = searchParams.get('profileId');
+
+    // If not in URL params, check the request body
+    if (!profileId) {
+      const body = await request.json();
+      profileId = body.profileId;
+    }
 
     if (!profileId) {
       return NextResponse.json(

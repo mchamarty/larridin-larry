@@ -4,7 +4,7 @@ import { Task } from '@/lib/supabase';
 
 export async function POST(request: Request) {
   try {
-    const { profileId } = await request.json();
+    const { profileId, answers } = await request.json();
 
     if (!profileId) {
       return NextResponse.json({ error: 'Profile ID is required' }, { status: 400 });
@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     }
 
     // Generate new tasks based on insights and existing tasks using Claude
-    const newTasks = await generateTasksFromInsights(insights || [], existingTasks || []);
+    const newTasks = await generateTasksFromInsights(insights || [], existingTasks || [], answers);
 
     // Save new tasks to the database
     const { data: savedTasks, error: saveError } = await supabase
@@ -56,9 +56,13 @@ export async function POST(request: Request) {
   }
 }
 
-async function generateTasksFromInsights(insights: any[], existingTasks: Task[]) {
+async function generateTasksFromInsights(insights: any[], existingTasks: Task[], answers: Record<string, string>) {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error('ANTHROPIC_API_KEY is not configured');
+  }
+
+  if (!insights || insights.length === 0) {
+    throw new Error('No insights provided');
   }
 
   const insightsText = insights.map(insight => 
@@ -69,13 +73,20 @@ async function generateTasksFromInsights(insights: any[], existingTasks: Task[])
     `Title: ${task.title}, Description: ${task.description}`
   ).join('\n');
 
-  const prompt = `Based on the following insights from a user and their existing tasks, generate 5 new personalized tasks that would be beneficial for their professional growth and productivity. Each task should be unique and not duplicate existing tasks. Each new task should include a title, description, category (strategic, operational, relational, or growth), expected outcome, strategic importance, and time estimate. Return ONLY a valid JSON array with no additional text or formatting.
+  const answersText = Object.entries(answers)
+    .map(([questionId, answer]) => `Question ${questionId}: ${answer}`)
+    .join('\n');
+
+  const prompt = `Based on the following insights from a user, their existing tasks, and their recent answers, generate 5 new personalized tasks that would be beneficial for their professional growth and productivity. Each task should be unique and not duplicate existing tasks. Each new task should include a title, description, category (strategic, operational, relational, or growth), expected outcome, strategic importance, and time estimate. Return ONLY a valid JSON array with no additional text or formatting.
 
 User Insights:
 ${insightsText}
 
 Existing Tasks:
 ${existingTasksText}
+
+Recent Answers:
+${answersText}
 
 Format the response as a JSON array like this:
 [
@@ -120,7 +131,7 @@ Format the response as a JSON array like this:
     }
 
     const data = await response.json();
-    console.log('Raw Claude response:', data); // Debug log
+    console.log('Raw Claude response:', data);
 
     const textContent = data.content?.[0]?.text;
     if (!textContent) {
@@ -128,12 +139,11 @@ Format the response as a JSON array like this:
       throw new Error('No valid text content received from Claude');
     }
 
-    console.log('Claude text content:', textContent); // Debug log
+    console.log('Claude text content:', textContent);
 
     try {
-      // Try to parse the response as JSON, removing any potential non-JSON content
       const cleanedContent = textContent.trim().replace(/^\`\`\`json\s*|\s*\`\`\`$/g, '');
-      console.log('Cleaned content:', cleanedContent); // Debug log
+      console.log('Cleaned content:', cleanedContent);
       
       const tasks = JSON.parse(cleanedContent);
       
@@ -149,15 +159,11 @@ Format the response as a JSON array like this:
     } catch (parseError) {
       console.error('Error parsing Claude response:', parseError);
       console.error('Raw content that failed to parse:', textContent);
-      if (parseError instanceof Error) {
-        throw new Error(`Failed to parse Claude response: ${parseError.message}`);
-      } else {
-        throw new Error('Failed to parse Claude response: Unknown error');
-      }
+      throw new Error(`Failed to parse Claude response: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error calling Claude API:', error);
-    throw new Error(`Failed to generate tasks: ${error.message}`);
+    throw new Error(`Failed to generate tasks: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 

@@ -1,94 +1,131 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
-export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const profileId = searchParams.get('profileId');
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-    if (!profileId) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
+export async function POST(request: Request) {
+ try {
+   const { profileId } = await request.json();
 
-    // Generate questions using AI (this is a placeholder, replace with actual AI integration)
-    const generatedQuestions = await generateQuestionsWithAI(profileId);
+   if (!profileId) {
+     return NextResponse.json(
+       { success: false, error: 'Profile ID is required' },
+       { status: 400 }
+     );
+   }
 
-    // Save generated questions to the database
-    const { data, error } = await supabase
-      .from('pre_generated_questions')
-      .insert(generatedQuestions)
-      .select();
+   // Fetch the user's LinkedIn data
+   const { data: profile, error: profileError } = await supabase
+     .from('profiles')
+     .select('linkedin_data')
+     .eq('id', profileId)
+     .single();
 
-    if (error) {
-      throw error;
-    }
+   if (profileError) {
+     console.error('Error fetching profile:', profileError);
+     return NextResponse.json(
+       { success: false, error: 'Failed to fetch profile data' },
+       { status: 500 }
+     );
+   }
 
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error('Error generating questions:', error);
-    return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
-  }
+   if (!profile || !profile.linkedin_data) {
+     return NextResponse.json(
+       { success: false, error: 'LinkedIn data not found for this profile' },
+       { status: 404 }
+     );
+   }
+
+   // Generate questions using Claude
+   const questions = await generateQuestionsWithClaude(profile.linkedin_data);
+
+   // Save generated questions to the database
+   const { error: insertError } = await supabase
+     .from('pre_generated_questions')
+     .insert(questions.map(q => ({ ...q, profile_id: profileId })));
+
+   if (insertError) {
+     console.error('Error inserting questions:', insertError);
+     return NextResponse.json(
+       { success: false, error: 'Failed to save generated questions' },
+       { status: 500 }
+     );
+   }
+
+   return NextResponse.json({
+     success: true,
+     message: 'Questions generated and saved successfully'
+   });
+
+ } catch (error) {
+   console.error('Unexpected error:', error);
+   return NextResponse.json(
+     { success: false, error: error instanceof Error ? error.message : 'An unexpected error occurred' },
+     { status: 500 }
+   );
+ }
 }
 
-async function generateQuestionsWithAI(profileId: string) {
-  // This is a placeholder function. Replace with actual AI integration.
-  // For now, we'll return a set of predefined questions
-  return [
-    {
-      profile_id: profileId,
-      text: "What's your biggest challenge at work right now?",
-      subtext: "Understanding your current challenges helps us tailor recommendations.",
-      options: [
-        "Time management",
-        "Team collaboration",
-        "Project deadlines",
-        "Work-life balance"
-      ]
-    },
-    {
-      profile_id: profileId,
-      text: "Which area of your professional skills do you want to improve most?",
-      subtext: "This helps us focus on your personal development goals.",
-      options: [
-        "Leadership",
-        "Technical skills",
-        "Communication",
-        "Strategic thinking"
-      ]
-    },
-    {
-      profile_id: profileId,
-      text: "How would you describe your current work environment?",
-      subtext: "This helps us understand your work context.",
-      options: [
-        "Fast-paced and dynamic",
-        "Structured and process-oriented",
-        "Collaborative and team-focused",
-        "Autonomous and independent"
-      ]
-    },
-    {
-      profile_id: profileId,
-      text: "What's your preferred learning style?",
-      subtext: "This helps us tailor our task recommendations to your learning preferences.",
-      options: [
-        "Visual (diagrams, charts)",
-        "Auditory (discussions, podcasts)",
-        "Reading/Writing",
-        "Kinesthetic (hands-on practice)"
-      ]
-    },
-    {
-      profile_id: profileId,
-      text: "What's your long-term career goal?",
-      subtext: "This helps us align our recommendations with your career aspirations.",
-      options: [
-        "Executive leadership",
-        "Technical expertise",
-        "Entrepreneurship",
-        "Consulting/Advisory roles"
-      ]
-    }
-  ];
-}
+async function generateQuestionsWithClaude(linkedInData: any): Promise<any[]> {
+ if (!ANTHROPIC_API_KEY) {
+   throw new Error('ANTHROPIC_API_KEY is not configured');
+ }
 
+ const prompt = `Based on the following LinkedIn profile data, generate 20 highly relevant and personalized multiple-choice questions for professional self-reflection. Each question should have 4 options. The questions should be tailored to the individual's career, skills, and experiences. Return ONLY a JSON array in this exact format:
+[{
+"text": "question text",
+"subtext": "explanation of relevance to the user's profile",
+"options": ["option1", "option2", "option3", "option4"]
+}]
+
+LinkedIn Profile Data:
+${JSON.stringify(linkedInData, null, 2)}`;
+
+ try {
+   const response = await fetch('https://api.anthropic.com/v1/messages', {
+     method: 'POST',
+     headers: {
+       'Content-Type': 'application/json',
+       'anthropic-version': '2023-06-01',
+       'x-api-key': ANTHROPIC_API_KEY,
+     },
+     body: JSON.stringify({
+       model: 'claude-3-opus-20240229',
+       max_tokens: 2048,
+       messages: [
+         {
+           role: 'user',
+           content: prompt,
+         },
+       ],
+     }),
+   });
+
+   if (!response.ok) {
+     throw new Error(`Failed to generate questions: ${response.statusText}`);
+   }
+
+   const data = await response.json();
+   const textContent = data.content?.[0]?.text;
+   if (!textContent) {
+     throw new Error('No valid text content received from Claude');
+   }
+
+   // Extract JSON array from the response
+   const jsonMatch = textContent.match(/\[[\s\S]*\]/);
+   if (!jsonMatch) {
+     throw new Error('No JSON array found in Claude response');
+   }
+
+   const questions = JSON.parse(jsonMatch[0]);
+
+   if (!Array.isArray(questions) || questions.length === 0) {
+     throw new Error('Invalid response format or empty questions array');
+   }
+
+   return questions;
+ } catch (error) {
+   console.error('Error generating questions with Claude:', error);
+   throw error;
+ }
+}

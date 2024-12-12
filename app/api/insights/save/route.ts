@@ -3,10 +3,14 @@ import { supabase } from '@/lib/supabase';
 
 export async function POST(req: Request) {
   try {
-    const { profileId, questionId, answer } = await req.json();
+    const body = await req.json();
+    const { profileId, questionId, answer } = body;
 
     if (!profileId || !questionId || !answer) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+      return NextResponse.json({ 
+        error: 'Missing required fields',
+        received: { profileId, questionId, answer }
+      }, { status: 400 });
     }
 
     console.log(`Saving insight for profile ${profileId}, question ${questionId}`);
@@ -27,28 +31,36 @@ export async function POST(req: Request) {
 
     console.log('Insight saved successfully:', data);
 
-    // Regenerate tasks
+    // Regenerate tasks if this completes a set of questions
     try {
       if (!process.env.NEXT_PUBLIC_APP_URL) {
         console.warn('NEXT_PUBLIC_APP_URL is not defined. Skipping task regeneration.');
       } else {
-        const regenerateResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/tasks/regenerate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ profileId }),
-        });
+        const { data: insights } = await supabase
+          .from('insights')
+          .select('*')
+          .eq('profile_id', profileId);
+        
+        // Only regenerate tasks after every 5 questions or when explicitly requested
+        if (insights && insights.length % 5 === 0) {
+          const regenerateResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/tasks/regenerate`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ profileId }),
+          });
 
-        if (!regenerateResponse.ok) {
-          throw new Error(`HTTP error! status: ${regenerateResponse.status}`);
+          if (!regenerateResponse.ok) {
+            throw new Error(`HTTP error! status: ${regenerateResponse.status}`);
+          }
+
+          console.log('Tasks regenerated successfully');
         }
-
-        console.log('Tasks regenerated successfully');
       }
     } catch (error) {
       console.error('Failed to regenerate tasks:', error);
-      // We don't return an error response here as the insight was saved successfully
+      // Don't return error since insight was saved successfully
     }
 
     return NextResponse.json({ success: true, data });

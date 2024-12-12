@@ -1,32 +1,27 @@
 import { NextResponse } from 'next/server';
+import { applyBestPractices } from '@/lib/tasks';
+import { callClaude } from '@/lib/claude';
 import { supabase } from '@/lib/supabase';
 
-export async function POST(req: Request) {
-  try {
-    const { profileId, sourceId } = await req.json();
+export async function POST(request: Request) {
+    const { profileId, selectedPractices } = await request.json();
+    const { data: profile } = await supabase.from('profiles').select('*').eq('id', profileId).single();
 
-    if (!profileId || !sourceId) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
+    const prompt = `Generate tasks incorporating these best practices: ${selectedPractices.join(', ')}
 
-    // Update the profile with the selected best practices source
-    const { error } = await supabase
-      .from('profiles')
-      .update({ best_practices_source: sourceId })
-      .eq('id', profileId);
+Leader Context:
+- Current Focus: ${profile.linkedin_data.person?.headline}
+- Recent Leadership Activities: ${profile.linkedin_data.posts?.slice(0,2).map((p: { text: string | any[]; }) => p.text?.slice(0,50)).join('\n')}
+- Key Skills: ${profile.linkedin_data.skills?.slice(0,5).join(', ')}
 
-    if (error) {
-      console.error('Error updating best practices source:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+Tasks should:
+1. Align with leader's demonstrated capabilities
+2. Address current industry challenges
+3. Leverage organizational context
+4. Drive measurable impact
 
-    // Here you would typically call your LLM (e.g., Claude) to fetch and process
-    // the best practices from the selected source. For now, we'll just return a success message.
+Return JSON array with task schema as specified.`;
 
-    return NextResponse.json({ success: true, message: 'Best practices source updated successfully' });
-  } catch (error) {
-    console.error('Unexpected error in /api/best-practices/select:', error);
-    return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
-  }
+    const tasks = await callClaude(prompt);
+    return NextResponse.json({ success: true, tasks });
 }
-

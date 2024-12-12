@@ -1,35 +1,34 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Sparkles, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { fetchLinkedInProfile, fetchLinkedInActivities } from '@/lib/scrapin';
+import { generateTasks } from '@/lib/tasks';
+import { toast } from '@/components/ui/use-toast';
 
 export default function Home() {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
 
     try {
-      console.log('Fetching LinkedIn data for:', url);
-
+      // 1. Fetch LinkedIn Data
       const [profile, activities] = await Promise.all([
         fetchLinkedInProfile(url),
         fetchLinkedInActivities(url),
       ]);
 
-      console.log('Fetched LinkedIn Profile:', profile);
-      console.log('Fetched LinkedIn Activities:', activities);
-
-      const { data, error: dbError } = await supabase
+      // 2. Insert Profile
+      const { data: profileData, error: dbError } = await supabase
         .from('profiles')
         .insert({
           linkedin_url: url,
@@ -38,20 +37,33 @@ export default function Home() {
         .select()
         .single();
 
-      console.log('Inserted Profile Data:', data);
-
       if (dbError) throw dbError;
 
-      // Ensure navigation happens after successful insert
-      if (data?.id) {
-        console.log('Navigating to Dashboard with Profile ID:', data.id);
-        window.location.href = `/dashboard?profile=${data.id}`;
-      } else {
+      if (!profileData?.id) {
         throw new Error('Failed to retrieve profile ID for navigation.');
       }
+
+      // 3. Generate Initial Tasks
+      try {
+        await generateTasks(profileData.id);
+      } catch (taskError) {
+        console.error('Error generating initial tasks:', taskError);
+        toast({
+          title: "Task Generation Warning",
+          description: "Initial tasks could not be generated. You can try again later from the dashboard.",
+          variant: "destructive",
+        });
+      }
+
+      // 4. Navigate to Dashboard
+      router.push(`/dashboard?profile=${profileData.id}`);
     } catch (err) {
       console.error('Error during submission:', err);
-      setError(err instanceof Error ? err.message : 'Something went wrong');
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : 'Something went wrong',
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -80,11 +92,11 @@ export default function Home() {
             onChange={(e) => setUrl(e.target.value)}
             className="h-12 px-4"
             disabled={loading}
+            required
           />
-          {error && <p className="text-red-500 text-sm">{error}</p>}
           <Button
             type="submit"
-            className="w-full h-12 text-lg bg-gradient-to-r from-blue-600 to-sky-600 hover:opacity-90"
+            className="w-full h-12 text-lg bg-gradient-to-r from-blue-600 to-sky-600 hover:opacity-90 transition-opacity"
             disabled={loading}
           >
             {loading ? (
@@ -101,3 +113,4 @@ export default function Home() {
     </main>
   );
 }
+
