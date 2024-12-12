@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import type { Profile, Task } from './supabase';
 
+
 async function callClaude(prompt: string): Promise<Array<{
   title: string;
   description: string;

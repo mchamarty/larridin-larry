@@ -32,9 +32,10 @@ export type Task = {
       expected_outcome: string;
       shareable_text: string;
       strategic_importance: string;
-      best_practice_source?: string; // Make this property optional
+      best_practice_source?: string;
     };
-  };
+    email_content?: string;
+};
   
 
 // Supabase client instance
