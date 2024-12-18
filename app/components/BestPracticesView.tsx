@@ -5,9 +5,10 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { Loader2, Check } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { Progress } from '@/components/ui/progress';
+import { useRouter } from 'next/navigation';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -20,7 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useAppContext } from '@/lib/AppContext';
 import { useToast } from "@/components/ui/use-toast";
-import { applyBestPractices } from '@/lib/tasks';
+import type { Task } from '@/lib/supabase';
 
 const bestPracticesSources = [
   { 
@@ -51,26 +52,27 @@ const bestPracticesSources = [
 ];
 
 export function BestPracticesView() {
+  const router = useRouter();
+  
   const {
     profileId,
-    selectedBestPractices,
-    setSelectedBestPractices,
     setTasks,
+    appendTasks,
     loading,
     setLoading,
     error,
     setError,
+    fetchInsights,
+    setActiveTab
   } = useAppContext();
   const { toast } = useToast();
 
+  const [selectedBestPractices, setSelectedBestPractices] = useState<string[]>([]);
   const [progress, setProgress] = useState(0);
   const [showApplyButton, setShowApplyButton] = useState(false);
   const [expandedSummaries, setExpandedSummaries] = useState<string[]>([]);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
-  const [isComplete, setIsComplete] = useState(false);
-  const [countdown, setCountdown] = useState(3);
-  const [isRegenerating, setIsRegenerating] = useState(false); // Added state variable
 
   useEffect(() => {
     const fetchSelectedSources = async () => {
@@ -101,7 +103,7 @@ export function BestPracticesView() {
     };
 
     fetchSelectedSources();
-  }, [profileId, setSelectedBestPractices, toast]);
+  }, [profileId, toast]);
 
   const handleSourceToggle = useCallback((sourceId: string) => {
     setSelectedBestPractices(prev => {
@@ -111,7 +113,7 @@ export function BestPracticesView() {
       setShowApplyButton(newSources.length > 0);
       return newSources;
     });
-  }, [setSelectedBestPractices]);
+  }, []);
 
   const toggleSummary = useCallback((sourceId: string) => {
     setExpandedSummaries(prev =>
@@ -120,65 +122,6 @@ export function BestPracticesView() {
         : [...prev, sourceId]
     );
   }, []);
-
-  const handleRegenerateTasks = useCallback(async () => {
-    if (!profileId) return;
-    
-    setProgress(0);
-    setCurrentStep('Preparing to generate new tasks');
-    try {
-      setProgress(20);
-      setCurrentStep('Analyzing selected best practices');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      setProgress(40);
-      
-      setCurrentStep('Generating new tasks');
-      const response = await fetch('/api/tasks/regenerate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId, bestPractices: selectedBestPractices }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to generate new tasks');
-      }
-
-      const newTasks = await response.json();
-      if (Array.isArray(newTasks)) {
-        setTasks(prevTasks => [...prevTasks, ...newTasks]);
-
-        setProgress(60);
-        setCurrentStep('Applying best practices to tasks');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        setProgress(80);
-        setCurrentStep('Finalizing task recommendations');
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        setProgress(100);
-        setCurrentStep('New tasks generated successfully');
-        
-        toast({
-          title: "New Tasks Generated",
-          description: `${newTasks.length} new tasks have been added based on the selected best practices.`,
-        });
-      } else {
-        console.error('Received non-array response:', newTasks);
-        throw new Error('Invalid response format for new tasks');
-      }
-    } catch (err) {
-      console.error('Error generating new tasks:', err);
-      setError('Failed to generate new tasks. Please try again.');
-      toast({
-        title: "Error",
-        description: "Failed to generate new tasks. Please try again.",
-        variant: "destructive"
-      });
-    } finally {
-      setIsRegenerating(false);
-      setProgress(0);
-      setCurrentStep(null);
-    }
-  }, [profileId, selectedBestPractices, setError, setTasks, toast]);
-
 
   const handleApply = useCallback(async () => {
     if (!profileId) {
@@ -194,8 +137,6 @@ export function BestPracticesView() {
     setError(null);
     setProgress(0);
     setCurrentStep('Initializing');
-    setIsComplete(false);
-    setIsRegenerating(true);
 
     try {
       setProgress(25);
@@ -208,18 +149,35 @@ export function BestPracticesView() {
       if (updateError) throw updateError;
 
       setProgress(50);
-      setCurrentStep('Applying best practices and generating new tasks');
-      const newTasks = await applyBestPractices(profileId, selectedBestPractices);
-      setTasks(prevTasks => [...newTasks, ...prevTasks]);
+      setCurrentStep('Generating tasks based on best practices');
+      const response = await fetch('/api/tasks/regenerate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ profileId, bestPractices: selectedBestPractices }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate tasks based on best practices');
+      }
+
+      const { tasks: newTasks } = await response.json();
+      appendTasks(newTasks);
+
+      setProgress(75);
+      setCurrentStep('Fetching updated insights');
+      await fetchInsights(profileId);
 
       setProgress(100);
       setCurrentStep('Best practices applied successfully');
-      setIsComplete(true);
-      setCountdown(3);
       toast({
         title: "Best Practices Applied",
         description: `${newTasks.length} new tasks have been created based on the selected best practices.`,
       });
+
+      setActiveTab('tasks');
+      router.push('/dashboard?tab=tasks');
     } catch (err) {
       console.error('Error applying best practices:', err);
       setError('Failed to apply best practices. Please try again.');
@@ -230,31 +188,11 @@ export function BestPracticesView() {
       });
     } finally {
       setLoading(false);
-      setIsRegenerating(false);
       setProgress(0);
       setCurrentStep(null);
+      setShowConfirmDialog(false);
     }
-  }, [profileId, selectedBestPractices, setTasks, toast]);
-
-  useEffect(() => {
-    let timer: NodeJS.Timeout | null = null;
-
-    if (isComplete) {
-      timer = setInterval(() => {
-        setCountdown((prevCount) => {
-          if (prevCount <= 1) {
-            if (timer) clearInterval(timer);
-            return 0;
-          }
-          return prevCount - 1;
-        });
-      }, 1000);
-    }
-
-    return () => {
-      if (timer) clearInterval(timer);
-    };
-  }, [isComplete]);
+  }, [profileId, selectedBestPractices, appendTasks, setActiveTab, router, setLoading, setError, toast, fetchInsights]);
 
   return (
     <Card className="p-6">
@@ -343,4 +281,3 @@ export function BestPracticesView() {
     </Card>
   );
 }
-

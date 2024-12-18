@@ -97,8 +97,9 @@ export const updateTask = async (taskId: string, updates: Partial<Task>): Promis
 export type Question = {
     id: string;
     profile_id: string;
+    question: string;
+    answer: string | null;
     data: {
-        question: string;
         context: string;
         focus_area: string;
         options: string[];

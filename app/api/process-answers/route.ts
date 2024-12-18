@@ -1,65 +1,78 @@
-// app/api/process-answers/route.ts
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
+import { generateTasks } from '@/lib/tasks';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
-    try {
-        const { profileId, answers } = await request.json();
-        
-        const { data: profile } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', profileId)
-            .single();
+  const cookieStore = cookies();
+  const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
 
-        const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/claude`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                prompt: `Based on these answers and profile, generate 5 highly personalized tasks:
+  try {
+    const { profileId } = await request.json();
 
-Profile Info:
-${JSON.stringify(profile.linkedin_data, null, 2)}
-
-Question Responses:
-${answers.map((a: { question: any; answers: any[]; }) => `Q: ${a.question}\nA: ${a.answers.join(', ')}`).join('\n\n')}
-
-Generate 5 NEW tasks that specifically address insights from their answers while leveraging their role and experience. Tasks should be highly actionable and contextually relevant.
-
-Return ONLY a JSON array:
-[{
-    "title": "Specific action item",
-    "description": "Detailed implementation steps",
-    "status": "pending",
-    "metadata": {
-        "category": "strategic|operational|relational|growth",
-        "importance": "high|medium|low",
-        "estimated_time": "short|medium|long"
-    },
-    "is_new": true,
-    "email_content": "Compelling pitch explaining value and implementation"
-}]`
-            })
-        });
-
-        const data = await response.json();
-        const tasks = JSON.parse(data.content[0].text);
-
-        const { data: storedTasks, error } = await supabase
-            .from('tasks')
-            .insert(tasks.map((task: any) => ({
-                ...task,
-                profile_id: profileId
-            })))
-            .select();
-
-        if (error) throw error;
-
-        return NextResponse.json({ success: true, tasks: storedTasks });
-    } catch (error) {
-        return NextResponse.json({ 
-            success: false, 
-            error: String(error) 
-        }, { status: 500 });
+    if (!profileId) {
+      return NextResponse.json(
+        { error: 'Profile ID is required' },
+        { status: 400 }
+      );
     }
+
+    // Fetch answers for the user
+    const { data: answers, error: answersError } = await supabase
+      .from('answers')
+      .select('*')
+      .eq('profile_id', profileId);
+
+    if (answersError) {
+      console.error('Error fetching answers:', answersError);
+      throw answersError;
+    }
+
+    // Generate tasks based on answers
+    const tasks = await generateTasks(profileId, answers);
+
+    // Remove IDs from tasks before insertion
+    const tasksWithoutIds = tasks.map(({ id, ...task }) => ({
+      ...task,
+      profile_id: profileId,
+      created_at: new Date().toISOString()
+    }));
+
+    // Save generated tasks
+    const { data: savedTasks, error: saveError } = await supabase
+      .from('tasks')
+      .insert(tasksWithoutIds)
+      .select();
+
+    if (saveError) {
+      console.error('Error saving tasks:', saveError);
+      
+      // If it's a unique constraint error, try one more time
+      if (saveError.code === '23505') {
+        const { data: retriedSave, error: retryError } = await supabase
+          .from('tasks')
+          .insert(tasksWithoutIds)
+          .select();
+          
+        if (retryError) {
+          console.error('Error on retry:', retryError);
+          throw retryError;
+        }
+        
+        return NextResponse.json({ success: true, tasks: retriedSave });
+      }
+      
+      throw saveError;
+    }
+
+    return NextResponse.json({ success: true, tasks: savedTasks });
+  } catch (error) {
+    console.error('Error processing answers and generating tasks:', error);
+    return NextResponse.json(
+      { error: 'Failed to process answers and generate tasks', details: error instanceof Error ? error.message : String(error) },
+      { status: 500 }
+    );
+  }
 }

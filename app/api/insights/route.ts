@@ -1,88 +1,118 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
-import { callClaude } from '@/lib/claude';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
+
+interface Question {
+  id: string;
+  text: string;
+  subtext: string;
+  options: string[];
+  profile_id: string;
+  created_at: string;
+}
+
+interface Answer {
+  id: string;
+  answer: string;
+  updated_at: string;
+  question_id: string;
+}
+
+export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
- const { searchParams } = new URL(request.url);
- const profileId = searchParams.get('profileId');
+  const { searchParams } = new URL(request.url);
+  const profileId = searchParams.get('profileId');
 
- if (!profileId) {
-   return NextResponse.json({ error: 'Profile ID is required' }, { status: 400 });
- }
+  if (!profileId) {
+    return NextResponse.json({ error: 'Profile ID is required' }, { status: 400 });
+  }
 
- try {
-   const { data: profile, error: profileError } = await supabase
-     .from('profiles')
-     .select('*')
-     .eq('id', profileId)
-     .single();
+  const supabase = createRouteHandlerClient({ cookies });
 
-   if (profileError) {
-     throw new Error('Failed to fetch profile data');
-   }
+  try {
+    const { data: lockData } = await supabase
+      .from('generation_locks')
+      .select('locked')
+      .eq('profile_id', profileId)
+      .maybeSingle();
 
-   const prompt = `Generate deep strategic insights for this leader's profile:
+    if (lockData?.locked) {
+      return NextResponse.json({ error: 'Questions are being generated' }, { status: 409 });
+    }
 
-PROFESSIONAL HISTORY:
-- Current: ${profile.linkedin_data.person?.headline}
-- Experience: ${profile.linkedin_data.positions?.positionHistory?.slice(0,3).map((p: { title: any; companyName: any; description: string | any[]; }) => 
-   `${p.title} at ${p.companyName} (${p.description?.slice(0,100)}...)`).join('\n')}
-- Skills: ${profile.linkedin_data.skills?.join(', ')}
+    const { data: existingQuestions } = await supabase
+      .from('pre_generated_questions')
+      .select('*')
+      .eq('profile_id', profileId);
 
-ENGAGEMENT & INFLUENCE:
-Posts (Last 5):
-${profile.linkedin_data.posts?.slice(0,5).map((p: { text: string | any[]; likesCount: any; commentsCount: any; activityDate: any; }) => 
- `• Topic: ${p.text?.slice(0,100)}
-  • Impact: ${p.likesCount} likes, ${p.commentsCount} comments
-  • Date: ${p.activityDate}`).join('\n')}
+    const questions = existingQuestions || [];
 
-Professional Interactions:
-${profile.linkedin_data.reactions?.slice(0,5).map((r: { relatedPost: { text: string | any[]; }; }) => 
- `• Engaged: ${r.relatedPost?.text?.slice(0,100)}`).join('\n')}
+    if (questions.length < 20) {
+      await supabase
+        .from('generation_locks')
+        .upsert({ profile_id: profileId, locked: true });
 
-Network Value:
-${profile.linkedin_data.recommendations?.recommendationHistory?.slice(0,3).map((r: { description: string | any[]; authorFullname: any; caption: any; }) =>
- `• "${r.description?.slice(0,100)}..." - ${r.authorFullname}, ${r.caption}`).join('\n')}
+      try {
+        console.log('Insufficient questions, generating new ones...');
+        const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/generate-questions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ profileId }),
+        });
 
-Generate strategic analysis covering:
-1. Leadership trajectory and impact areas
-2. Network influence patterns
-3. Professional growth opportunities
-4. Industry positioning
-5. Content engagement effectiveness
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+      } finally {
+        await supabase
+          .from('generation_locks')
+          .upsert({ profile_id: profileId, locked: false });
+      }
+    }
 
-Return JSON: {
- "strategic_insights": [{
-   "area": string,
-   "insight": string,
-   "evidence": string[],
-   "recommendations": string[]
- }],
- "metrics": {
-   "influence_score": number,
-   "engagement_rate": number,
-   "expertise_domains": string[],
-   "growth_vectors": string[]
- },
- "priority_actions": {
-   "immediate": string[],
-   "short_term": string[],
-   "long_term": string[]
- }
-}`;
+    const { data: finalQuestions } = await supabase
+      .from('pre_generated_questions')
+      .select('*')
+      .eq('profile_id', profileId)
+      .limit(20);
 
-   const insights = await callClaude(prompt);
-   
-   await supabase.from('insights').upsert({ 
-     profile_id: profileId,
-     data: insights,
-     created_at: new Date().toISOString()
-   });
+    if (!finalQuestions || finalQuestions.length === 0) {
+      throw new Error('No questions available');
+    }
 
-   return NextResponse.json({ insights });
+    const { data: userAnswers } = await supabase
+      .from('answers')
+      .select('id, answer, updated_at, question_id')
+      .eq('profile_id', profileId)
+      .order('updated_at', { ascending: false });
 
- } catch (error) {
-   console.error('Error in /api/insights:', error);
-   return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
- }
+    const answers = userAnswers || [];
+    const currentSet = Math.floor(answers.length / 5);
+
+    const insights = finalQuestions.map((question: Question) => ({
+      ...question,
+      answer: answers.find(a => a.question_id === question.id)?.answer || null,
+      answered_at: answers.find(a => a.question_id === question.id)?.updated_at || null
+    }));
+
+    return NextResponse.json({
+      insights,
+      progress: {
+        answeredQuestions: answers.length,
+        totalQuestions: 20,
+        progressPercentage: Math.round((answers.length / 20) * 100),
+        currentSet,
+        isSetComplete: answers.length % 5 === 0,
+        remainingSets: Math.ceil((20 - answers.length) / 5)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    return NextResponse.json({ 
+      error: 'Failed to fetch insights',
+      details: error instanceof Error ? error.message : String(error)
+    }, { status: 500 });
+  }
 }

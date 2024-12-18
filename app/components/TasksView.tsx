@@ -1,15 +1,25 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Share2, CheckCircle, Loader2, Sparkles, Clock } from 'lucide-react';
+import { Share2, CheckCircle, Loader2, Sparkles, Clock, Plus } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { TaskEmailDialog } from './TaskEmailDialog';
 import { Badge } from '@/components/ui/badge';
-import { useAppContext } from '@/lib/AppContext';
+import { useAppContext, Task } from '@/lib/AppContext';
 import { useToast } from "@/components/ui/use-toast"
-import { Task } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
+
+// interface TasksResponse { //Removed this line
+//   tasks: Task[];
+//   count: number;
+// }
+
+interface TasksResponse {
+  tasks: Task[];
+  count: number;
+}
 
 const categoryStyles: Record<string, string> = {
   strategic: 'border-l-purple-400 bg-purple-50/30',
@@ -32,27 +42,42 @@ const timeEstimates: Record<string, string> = {
 };
 
 export function TasksView() {
-  const {
+  const { 
+    profileId, 
+    setError, 
     tasks,
     setTasks,
-    loading,
-    error,
-    setError,
-    profileId,
+    tasksLoading,
+    fetchTasks,
+    generateTasks
   } = useAppContext();
   const { toast } = useToast()
 
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [emailOpen, setEmailOpen] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const tasksPerPage = 5;
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [generatingTasks, setGeneratingTasks] = useState(false);
+  const [taskGenerationProgress, setTaskGenerationProgress] = useState(0);
 
-  const indexOfLastTask = currentPage * tasksPerPage;
-  const indexOfFirstTask = indexOfLastTask - tasksPerPage;
-  const currentTasks = tasks.slice(0, indexOfLastTask);
-  const hasMoreTasks = indexOfLastTask < tasks.length;
+  const pageSize = 10;
 
-  const handleComplete = async (taskId: string): Promise<void> => {
+  useEffect(() => {
+    if (profileId) {
+      setLoading(true);
+      fetchTasks(profileId).then((response: TasksResponse | undefined) => {
+        if (response && response.tasks) {
+          setTasks(response.tasks);
+          setHasMore(response.count > response.tasks.length);
+        }
+        setLoading(false);
+      });
+    }
+  }, [profileId, fetchTasks, setTasks]);
+
+  const handleComplete = async (taskId: string) => {
     try {
       const response = await fetch('/api/tasks/update', {
         method: 'POST',
@@ -90,58 +115,131 @@ export function TasksView() {
     setEmailOpen(true);
   };
 
-  const loadMoreTasks = () => {
-    setCurrentPage(prevPage => prevPage + 1);
+  const loadMoreTasks = useCallback(async () => {
+    if (!profileId) return;
+    setLoadingMore(true);
+    const nextPage = page + 1;
+    const response = await fetchTasks(profileId);
+    if (response && response.tasks) {
+      setTasks(prevTasks => [...prevTasks, ...response.tasks]);
+      setPage(nextPage);
+      setHasMore(response.count > (tasks.length + response.tasks.length));
+    }
+    setLoadingMore(false);
+  }, [page, fetchTasks, profileId, setTasks, tasks.length]);
+
+  const handleGenerateMoreTasks = async () => {
+    if (!profileId || generatingTasks) return;
+
+    setGeneratingTasks(true);
+    setTaskGenerationProgress(0);
+    try {
+      // Fetch answers from the insights table
+      const { data: answers, error } = await supabase
+        .from('insights')
+        .select('question_id, answer')
+        .eq('profile_id', profileId);
+
+      if (error) throw error;
+
+      // Simulate progress updates
+      const progressInterval = setInterval(() => {
+        setTaskGenerationProgress(prev => Math.min(prev + 10, 90));
+      }, 500);
+
+      const response = await fetch('/api/process-answers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId, answers }),
+      });
+
+      clearInterval(progressInterval);
+      setTaskGenerationProgress(100);
+
+      if (!response.ok) {
+        throw new Error('Failed to generate tasks');
+      }
+
+      const { tasks: newTasks } = await response.json();
+
+      setTasks(prevTasks => {
+        const updatedTasks = [...newTasks, ...prevTasks];
+        return updatedTasks.map(task => ({
+          ...task,
+          is_new: newTasks.some((newTask: Task) => newTask.id === task.id)
+        }));
+      });
+
+      toast({
+        title: "Tasks Generated",
+        description: `${newTasks.length} new tasks have been generated successfully.`,
+      });
+    } catch (error) {
+      console.error('Error generating tasks:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate new tasks. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setGeneratingTasks(false);
+      setTaskGenerationProgress(0);
+    }
   };
 
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-64 space-y-4">
-        <div className="relative">
-          <Loader2 className="w-12 h-12 animate-spin text-blue-500" />
-          <div className="absolute inset-0 animate-pulse opacity-50" />
-        </div>
-        <div className="space-y-2 text-center">
-          <p className="text-lg font-medium text-gray-700">
-            Analyzing your profile and preparing personalized recommendations...
-          </p>
-          <p className="text-sm text-gray-500">
-            This may take a few moments as we process your LinkedIn data
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="text-center py-8">
-        <p className="text-red-500 mb-4">{error}</p>
-        <Button onClick={() => window.location.reload()}>Try Again</Button>
+        <Loader2 className="w-12 h-12 animate-spin text-blue-500" />
+        <p className="text-lg font-medium text-gray-700">Loading tasks...</p>
       </div>
     );
   }
 
   if (tasks.length === 0) {
     return (
-      <div className="text-center py-12">
-        <div className="animate-pulse">
-          <Loader2 className="w-8 h-8 mx-auto mb-4 text-blue-500" />
-          <p className="text-lg text-gray-600">
-            Analyzing your profile and preparing personalized recommendations...
-          </p>
-        </div>
+      <div className="text-center py-8">
+        <p className="text-xl font-medium text-gray-700">No tasks available.</p>
+        <p className="text-gray-500 mt-2">Generate some personalized tasks to get started.</p>
+        <Button onClick={handleGenerateMoreTasks} disabled={generatingTasks} className="mt-4">
+          {generatingTasks ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+              Generating...
+            </>
+          ) : (
+            'Generate Tasks'
+          )}
+        </Button>
       </div>
     );
   }
 
   return (
     <>
-      <div className="mb-4">
-        <h2 className="text-2xl font-bold">Recommended Tasks</h2>
+      {generatingTasks && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-lg shadow-xl">
+            <h3 className="text-lg font-semibold mb-4">Generating Tasks</h3>
+            <div className="w-64 h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-blue-500 transition-all duration-500 ease-out"
+                style={{ width: `${taskGenerationProgress}%` }}
+              ></div>
+            </div>
+            <p className="mt-2 text-sm text-gray-600">Please wait...</p>
+          </div>
+        </div>
+      )}
+      <div className="mb-4 flex justify-between items-center">
+        <h2 className="text-2xl font-bold">Recommended Tasks ({tasks.length})</h2>
+        <Button onClick={handleGenerateMoreTasks} disabled={generatingTasks} className="flex items-center gap-2">
+          {generatingTasks ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+          Generate More Tasks
+        </Button>
       </div>
       <div className="space-y-6">
-        {currentTasks.map((task) => (
+        {tasks.map((task) => (
           <Card
             key={task.id}
             className={`
@@ -173,12 +271,6 @@ export function TasksView() {
                 <h4 className="font-medium text-gray-700 mb-2">Why this task?</h4>
                 <p className="text-gray-600 text-sm">{task.metadata.strategic_importance}</p>
               </div>
-              {task.metadata.best_practice_source && (
-                <div className="mt-2">
-                  <span className="font-medium">Best Practice Source:</span>
-                  <span className="ml-2">{task.metadata.best_practice_source}</span>
-                </div>
-              )}
 
               <div className="flex items-center text-sm text-gray-600 space-x-4">
                 <div className="flex items-center">
@@ -217,10 +309,22 @@ export function TasksView() {
           </Card>
         ))}
       </div>
-      {hasMoreTasks && (
+      {hasMore && (
         <div className="mt-6 flex justify-center">
-          <Button onClick={loadMoreTasks} variant="outline" className="w-full max-w-sm">
-            Load More Tasks
+          <Button 
+            onClick={loadMoreTasks} 
+            variant="outline" 
+            className="w-full max-w-sm"
+            disabled={loadingMore}
+          >
+            {loadingMore ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Loading...
+              </>
+            ) : (
+              'Load More Tasks'
+            )}
           </Button>
         </div>
       )}

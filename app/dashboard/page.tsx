@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TasksView } from '../components/TasksView';
 import { InsightsView } from '../components/InsightsView';
@@ -22,6 +22,7 @@ export default function Dashboard() {
 
 function DashboardContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const {
     loading,
     error,
@@ -31,24 +32,24 @@ function DashboardContent() {
     setActiveTab,
     showSwitchProfileDialog,
     setShowSwitchProfileDialog,
-    fetchTasks,
-    setTasks,
-    setLoading,
-    setError,
   } = useAppContext();
 
   useEffect(() => {
     const id = searchParams.get('profile');
+    const tab = searchParams.get('tab');
     if (id && id !== profileId) {
       console.log('Setting profile ID:', id);
       setProfileId(id);
-      fetchTasks(id);
     }
-  }, [searchParams, profileId, setProfileId, fetchTasks]);
+    if (tab && tab !== activeTab) {
+      setActiveTab(tab);
+    }
+  }, [searchParams, profileId, setProfileId, activeTab, setActiveTab]);
 
   const handleTabChange = useCallback((value: string) => {
     setActiveTab(value);
-  }, [setActiveTab]);
+    router.push(`/dashboard?profile=${profileId}&tab=${value}`);
+  }, [setActiveTab, router, profileId]);
 
   const handleSwitchProfile = useCallback(() => {
     window.location.href = '/';

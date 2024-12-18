@@ -1,27 +1,46 @@
 import { NextResponse } from 'next/server';
-import { applyBestPractices } from '@/lib/tasks';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { cookies } from 'next/headers';
 import { callClaude } from '@/lib/claude';
-import { supabase } from '@/lib/supabase';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
+  const supabase = createRouteHandlerClient({ cookies });
+
+  try {
     const { profileId, selectedPractices } = await request.json();
-    const { data: profile } = await supabase.from('profiles').select('*').eq('id', profileId).single();
 
-    const prompt = `Generate tasks incorporating these best practices: ${selectedPractices.join(', ')}
+    if (!profileId || !selectedPractices) {
+      return NextResponse.json({ error: 'Invalid request parameters' }, { status: 400 });
+    }
 
-Leader Context:
-- Current Focus: ${profile.linkedin_data.person?.headline}
-- Recent Leadership Activities: ${profile.linkedin_data.posts?.slice(0,2).map((p: { text: string | any[]; }) => p.text?.slice(0,50)).join('\n')}
-- Key Skills: ${profile.linkedin_data.skills?.slice(0,5).join(', ')}
+    // Fetch the user's LinkedIn data
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('linkedin_data')
+      .eq('id', profileId)
+      .single();
 
-Tasks should:
-1. Align with leader's demonstrated capabilities
-2. Address current industry challenges
-3. Leverage organizational context
-4. Drive measurable impact
+    if (profileError) throw profileError;
 
-Return JSON array with task schema as specified.`;
+    // Generate tasks based on selected best practices
+    const prompt = `Generate tasks based on these best practices: ${selectedPractices.join(', ')} for this LinkedIn profile: ${JSON.stringify(profile.linkedin_data)}`;
+    
+    const tasks = await callClaude(prompt, 'tasks'); // Added 'tasks' as the second argument
 
-    const tasks = await callClaude(prompt);
-    return NextResponse.json({ success: true, tasks });
+    // Save generated tasks to the database
+    const { data: insertedTasks, error: insertError } = await supabase
+      .from('tasks')
+      .insert(tasks.map((task: any) => ({ ...task, profile_id: profileId })))
+      .select();
+
+    if (insertError) throw insertError;
+
+    return NextResponse.json({ tasks: insertedTasks });
+  } catch (error) {
+    console.error('Error in /api/best-practices/select:', error);
+    return NextResponse.json({ error: 'An unexpected error occurred' }, { status: 500 });
+  }
 }
+

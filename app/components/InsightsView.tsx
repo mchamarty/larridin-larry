@@ -1,319 +1,269 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect, useCallback } from 'react';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { Loader2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { useAppContext } from '@/lib/AppContext';
-import { useToast } from "@/components/ui/use-toast";
+import { Loader2, CheckCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 import { useRouter } from 'next/navigation';
-import { generateTasks } from '@/lib/tasks';
-import { generateQuestions, Question as BaseQuestion, QuestionResponse } from '@/lib/questions';
 
-interface Question extends BaseQuestion {
+interface Question {
   id: string;
+  text: string;
+  subtext: string;
+  options: string[];
 }
 
 export function InsightsView() {
+  const { profileId } = useAppContext();
   const router = useRouter();
-  const { profileId, setTasks, setActiveTab } = useAppContext();
-  const { toast } = useToast();
-  const [allQuestions, setAllQuestions] = useState<Question[]>([]);
-  const [currentSet, setCurrentSet] = useState<Question[]>([]);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [currentSetIndex, setCurrentSetIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isGeneratingTasks, setIsGeneratingTasks] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [answeredQuestionIds, setAnsweredQuestionIds] = useState<string[]>([]);
+  const [taskGenerationProgress, setTaskGenerationProgress] = useState(0);
 
-  const fetchProgress = async () => {
+  const currentQuestions = questions.slice(Math.floor(currentSetIndex / 5) * 5, Math.floor(currentSetIndex / 5) * 5 + 5);
+  const currentQuestion = currentQuestions[currentSetIndex % 5];
+  const isSetComplete = (currentSetIndex + 1) % 5 === 0 && selectedAnswers[currentQuestion?.id];
+  const hasMoreQuestions = currentSetIndex < 15;
+  const showQuestions = !isGeneratingTasks && currentQuestion;
+  const progressPercent = ((currentSetIndex % 5) + 1) * 20;
+
+  const loadQuestions = useCallback(async () => {
     if (!profileId) return;
     try {
-      const response = await fetch(`/api/insights/progress?profileId=${profileId}`);
-      if (!response.ok) throw new Error('Failed to fetch progress');
+      const response = await fetch(
+        `${window.location.origin}/api/insights?profileId=${profileId}&_=${Date.now()}`,
+        { cache: 'no-store' }
+      );
+      if (!response.ok) throw new Error('Failed to load questions');
       const data = await response.json();
-      setAnsweredQuestionIds(data.answeredQuestionIds);
-    } catch (error) {
-      console.error('Error fetching progress:', error);
+      if (!data.insights || data.insights.length === 0) {
+        throw new Error('No questions available');
+      }
+      setQuestions(data.insights);
+    } catch (e) {
+      console.error('Load error:', e);
+      setError(e instanceof Error ? e.message : 'Failed to load questions');
+    } finally {
+      setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    const fetchQuestionsAndProgress = async () => {
-      if (!profileId) {
-        setError('Profile ID is missing');
-        setLoading(false);
-        return;
-      }
-
-      try {
-        await fetchProgress();
-
-        const { data: existingQuestions, error: fetchError } = await supabase
-          .from('pre_generated_questions')
-          .select('*')
-          .eq('profile_id', profileId);
-
-        if (fetchError) throw fetchError;
-
-        if (existingQuestions && existingQuestions.length > 0) {
-          setAllQuestions(existingQuestions);
-          const unansweredQuestions = existingQuestions.filter(q => !answeredQuestionIds.includes(q.id));
-          setCurrentSet(unansweredQuestions.slice(0, 5));
-          setCurrentSetIndex(Math.floor(answeredQuestionIds.length / 5));
-        } else {
-          await loadQuestions();
-        }
-      } catch (err) {
-        console.error('Error loading questions:', err);
-        setError('Failed to load questions. Please try again.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchQuestionsAndProgress();
   }, [profileId]);
 
   useEffect(() => {
-    if (allQuestions.length > 0) {
-      const startIdx = currentSetIndex * 5;
-      setCurrentSet(allQuestions.slice(startIdx, startIdx + 5));
-    }
-  }, [currentSetIndex, allQuestions]);
+    loadQuestions();
+  }, [loadQuestions]);
 
-  const handleAnswer = async (answer: string) => {
-    if (!profileId) return;
-    const currentQuestion = currentSet[currentQuestionIndex];
-    setAnswers(prev => ({ ...prev, [currentQuestion.id]: answer }));
-    setAnsweredQuestionIds(prev => [...prev, currentQuestion.id]);
+  const handleAnswerSelect = useCallback((questionId: string, answer: string) => {
+    setSelectedAnswers(prev => ({ ...prev, [questionId]: answer }));
+  }, []);
 
-    try {
-      await supabase.from('insights').insert({
-        profile_id: profileId,
-        question_id: currentQuestion.id,
-        answer: answer
-      });
+  const handleAnswerMoreQuestions = useCallback(() => {
+    const nextSetIndex = Math.floor(currentSetIndex / 5) * 5 + 5;
+    setCurrentSetIndex(nextSetIndex);
+    setSelectedAnswers({});
+  }, [currentSetIndex]);
 
-      if (currentQuestionIndex < currentSet.length - 1) {
-        setCurrentQuestionIndex(prev => prev + 1);
-      } else if (answeredQuestionIds.length < allQuestions.length -1) {
-        setCurrentSetIndex(prev => prev + 1);
-        setCurrentQuestionIndex(0);
-        const nextSetStart = (currentSetIndex + 1) * 5;
-        setCurrentSet(allQuestions.slice(nextSetStart, nextSetStart + 5));
-      } else {
-        handleAllQuestionsAnswered();
-      }
-    } catch (err) {
-      console.error('Error saving answer:', err);
-      toast({
-        title: "Error",
-        description: "Failed to save your answer. Please try again.",
-        variant: "destructive"
-      });
-    }
-  };
-
-  const handleAllQuestionsAnswered = async () => {
-    toast({
-      title: "All Questions Answered",
-      description: "Thank you for answering all questions. Generating new questions for you.",
-    });
-    await generateNewQuestions();
-  };
-
-  const handleDone = async () => {
-    if (!profileId) {
-      toast({
-        title: "Error",
-        description: "Profile ID is missing. Please try again.",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    setIsGeneratingTasks(true);
-    try {
-      const newTasks = await generateTasks(profileId);
-      setTasks(prevTasks => [...newTasks, ...prevTasks]);
-      toast({
-        title: "Tasks Generated",
-        description: `${newTasks.length} new tasks have been created based on your insights.`,
-      });
-    } catch (err) {
-      console.error('Error generating tasks:', err);
-      toast({
-        title: "Error",
-        description: "Failed to generate new tasks. Please try again.",
-        variant: "destructive"
-      });
-    } finally {
-      setIsGeneratingTasks(false);
-      setActiveTab('tasks');
-    }
-  };
-
-  const loadQuestions = async () => {
-    if (!profileId) {
-      setError('Profile ID is missing');
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
+  const handleSubmitAnswer = useCallback(async () => {
+    if (!currentQuestion?.id || !selectedAnswers[currentQuestion.id] || !profileId) return;
 
     try {
-      const response = await fetch('/api/generate-questions', {
+      const response = await fetch('/api/insights/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId })
-      });
-
-      const data: QuestionResponse = await response.json();
-
-      if (!response.ok || data.error) {
-        throw new Error(data.error || 'Failed to load questions');
-      }
-
-      if (data.questions && data.questions.length > 0) {
-        setAllQuestions(data.questions as Question[]);
-        setCurrentSet(data.questions.slice(0, 5) as Question[]);
-        setError(null);
-      } else {
-        throw new Error('No questions received');
-      }
-    } catch (err) {
-      console.error('Error:', err);
-      setError(`Failed to load questions: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const generateNewQuestions = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch('/api/generate-questions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId })
+        body: JSON.stringify({
+          profileId,
+          questionId: currentQuestion.id,
+          answer: selectedAnswers[currentQuestion.id],
+          currentSetIndex,
+        }),
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`Failed to save answer: ${errorText}`);
       }
 
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error);
+      await loadQuestions();
+      
+      if ((currentSetIndex + 1) % 5 !== 0) {
+        setCurrentSetIndex(prev => prev + 1);
       }
-
-      if (data.questions) {
-        setAllQuestions(data.questions);
-        setCurrentSet(data.questions.slice(0, 5));
-        setCurrentSetIndex(0);
-        setCurrentQuestionIndex(0);
-        setAnsweredQuestionIds([]);
-      } else {
-        throw new Error('Invalid response format');
-      }
-    } catch (err) {
-      console.error('Error generating new questions:', err);
-      setError('Failed to generate new questions. Please try again.');
-    } finally {
-      setLoading(false);
+    } catch (e) {
+      console.error('Save error:', e);
+      setError(e instanceof Error ? e.message : 'Failed to save answer');
     }
-  };
+  }, [currentQuestion, selectedAnswers, currentSetIndex, profileId, loadQuestions]);
 
-  if (loading) {
+  // Transform selectedAnswers into the expected format:
+const handleDoneForNow = useCallback(async () => {
+  if (!profileId) {
+    setError('Missing profile ID');
+    return;
+  }
+
+  setIsGeneratingTasks(true);
+  setTaskGenerationProgress(0);
+  let progressInterval: NodeJS.Timeout | undefined = undefined;
+
+  try {
+    progressInterval = setInterval(() => {
+      setTaskGenerationProgress(prev => Math.min(prev + 5, 90));
+    }, 500);
+
+    // Transform the answers format
+    const formattedAnswers = Object.entries(selectedAnswers).map(([question_id, answer]) => ({
+      question_id,
+      answer
+    }));
+
+    const response = await fetch('/api/generate-tasks-from-insights', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        profileId, 
+        includeLinkedIn: true,
+        answers: formattedAnswers
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to generate tasks: ${errorText}`);
+    }
+
+    setTaskGenerationProgress(100);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    router.push(`/dashboard?profile=${profileId}&tab=tasks`);
+  } catch (error) {
+    console.error('Task generation error:', error);
+    setError(error instanceof Error ? error.message : 'Failed to generate tasks');
+  } finally {
+    clearInterval(progressInterval);
+    setIsGeneratingTasks(false);
+  }
+}, [profileId, router, selectedAnswers]);
+
+  if (loading || isGeneratingTasks) {
     return (
-      <div className="flex flex-col items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-        <p className="mt-4 text-lg font-medium text-gray-700">Loading questions...</p>
-      </div>
+      <Card className="w-full">
+        <CardHeader>
+          <h3 className="text-2xl font-semibold">More About You</h3>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-6">
+            <div className="flex flex-col items-center gap-4">
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <p className="text-sm text-gray-600">
+                {isGeneratingTasks ? 'Generating personalized tasks...' : 'Loading questions...'}
+              </p>
+            </div>
+            {isGeneratingTasks && (
+              <Progress value={taskGenerationProgress} className="w-full" />
+            )}
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
   if (error) {
     return (
-      <div className="text-center py-8">
-        <p className="text-red-500 mb-4">{error}</p>
-        <Button onClick={() => {
-          window.location.reload();
-        }}>Try Again</Button>
-      </div>
+      <Card className="w-full">
+        <CardHeader>
+          <h3 className="text-2xl font-semibold">More About You</h3>
+        </CardHeader>
+        <CardContent>
+          <div className="text-center space-y-4">
+            <p className="text-red-500">{error}</p>
+            <Button onClick={() => { setError(null); loadQuestions(); }}>
+              Try Again
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
-  const currentQuestion = currentSet[currentQuestionIndex];
+  if (isSetComplete) {
+    return (
+      <Card className="w-full">
+        <CardHeader>
+          <h3 className="text-2xl font-semibold">More About You</h3>
+          <p className="text-sm text-gray-600 mt-2">Set Completed!</p>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold">Set Completed</h3>
+            <p>You've completed this set of questions. What would you like to do next?</p>
+            <div className="flex space-x-4">
+              {hasMoreQuestions && (
+                <Button onClick={handleAnswerMoreQuestions}>Answer More Questions</Button>
+              )}
+              <Button variant="outline" onClick={handleDoneForNow}>I'm Done for Now</Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <Card className="p-6 max-w-2xl mx-auto">
-      <h2 className="text-2xl font-bold mb-4">More About You</h2>
-      <Progress 
-        value={((currentSetIndex * 5 + currentQuestionIndex + 1) / 20) * 100} 
-        className="mb-6" 
-      />
-
-      {currentQuestion ? (
-        <>
-          <h3 className="text-xl mb-2">{currentQuestion.text}</h3>
-          <p className="text-gray-600 mb-6">{currentQuestion.subtext}</p>
-
-          <div className="space-y-3">
-            {currentQuestion.options?.map((option, index) => (
-              <Button
-                key={index}
-                variant="outline"
-                className="w-full justify-start text-left py-3"
-                onClick={() => handleAnswer(option)}
-              >
-                {option}
-              </Button>
-            ))}
-          </div>
-
-          <div className="mt-8 flex justify-between items-center">
+    <Card className="w-full">
+      <CardHeader>
+        <h3 className="text-2xl font-semibold">More About You</h3>
+        <p className="text-sm text-gray-600 mt-2">
+          This section helps us understand your goals and aspirations to provide personalized recommendations.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {showQuestions && (
+          <div className="mb-6 space-y-2">
+            <Progress value={progressPercent} className="w-full" />
             <p className="text-sm text-gray-500">
-              Question {currentSetIndex * 5 + currentQuestionIndex + 1} of 20
+              Question {(currentSetIndex % 5) + 1} of 5 in current set
             </p>
-            <Button onClick={handleDone} variant="outline" disabled={isGeneratingTasks}>
-              {isGeneratingTasks ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Generating Tasks...
-                </>
-              ) : (
-                "I'm done for now"
-              )}
-            </Button>
           </div>
-        </>
-      ) : (
-        <div className="text-center py-8">
-          <h3 className="text-2xl font-bold text-green-600 mb-4">All Done!</h3>
-          <p className="text-lg text-gray-700 mb-6">
-            Thank you for answering all the questions. Your insights will help us provide better recommendations.
-          </p>
-          <Button onClick={handleDone} disabled={isGeneratingTasks}>
-            {isGeneratingTasks ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Generating Tasks...
-              </>
-            ) : (
-              'Generate New Tasks'
-            )}
-          </Button>
-        </div>
-      )}
+        )}
+
+        {currentQuestion && (
+          <div className="space-y-4">
+            <h3 className="text-lg font-semibold">Question {(currentSetIndex % 5) + 1} of 5</h3>
+            <p className="text-base">{currentQuestion.text}</p>
+            <p className="text-sm text-gray-600">{currentQuestion.subtext}</p>
+            <RadioGroup
+              onValueChange={(value) => handleAnswerSelect(currentQuestion.id, value)}
+              value={selectedAnswers[currentQuestion.id]}
+            >
+              {currentQuestion.options.map((option, index) => (
+                <div key={index} className="flex items-center space-x-2">
+                  <RadioGroupItem value={option} id={`option-${index}`} />
+                  <Label htmlFor={`option-${index}`} className="flex items-center">
+                    {option}
+                    {selectedAnswers[currentQuestion.id] === option && (
+                      <CheckCircle className="w-4 h-4 ml-2 text-green-500" />
+                    )}
+                  </Label>
+                </div>
+              ))}
+            </RadioGroup>
+            <div className="flex space-x-4">
+              <Button
+                onClick={handleSubmitAnswer}
+                disabled={!selectedAnswers[currentQuestion.id]}
+              >
+                {(currentSetIndex + 1) % 5 === 0 ? 'Finish Set' : 'Next Question'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
     </Card>
   );
 }

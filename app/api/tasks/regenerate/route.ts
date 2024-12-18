@@ -13,29 +13,40 @@ export async function POST(request: Request) {
       );
     }
 
-    // Delete existing tasks for the profile
-    const { error: deleteError } = await supabase
-      .from('tasks')
-      .delete()
-      .eq('profile_id', profileId);
+    console.log(`Generating additional tasks for profile ${profileId}`);
 
-    if (deleteError) {
-      console.error('Error deleting existing tasks:', deleteError);
+    // Generate new tasks without IDs
+    const newTasks = await generateTasks(profileId, bestPractices);
+    
+    // Remove any existing IDs to let Supabase generate new ones
+    const tasksForInsertion = newTasks.map(({ id, ...task }) => task);
+
+    // Insert tasks and let Supabase generate new IDs
+    const { data: savedTasks, error: insertError } = await supabase
+      .from('tasks')
+      .insert(tasksForInsertion)
+      .select();
+
+    if (insertError) {
+      console.error('Error inserting new tasks:', insertError);
       return NextResponse.json(
-        { error: 'Failed to delete existing tasks' },
+        { error: 'Failed to save new tasks' },
         { status: 500 }
       );
     }
 
-    // Generate new tasks
-    const tasks = await generateTasks(profileId, bestPractices);
-    return NextResponse.json(tasks);
+    return NextResponse.json({
+      success: true,
+      tasks: savedTasks
+    });
   } catch (error) {
     console.error('Error regenerating tasks:', error);
     return NextResponse.json(
-      { error: 'Failed to regenerate tasks' },
+      {
+        error: 'Failed to regenerate tasks',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     );
   }
 }
-
