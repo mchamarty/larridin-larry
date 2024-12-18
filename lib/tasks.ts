@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import type { Profile, Task } from './supabase';
+import { NextResponse } from 'next/server';
 
 async function callClaudeAPI(prompt: string) {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -19,6 +20,12 @@ async function callClaudeAPI(prompt: string) {
     }
 
     const data = await response.json();
+    return NextResponse.json({
+      success: true,
+      data: {
+        content: [{ text: data.content[0].text }]
+      }
+    });
     
     if (!data.success || !data.data?.content?.[0]?.text) {
       throw new Error('Invalid response format from API');
