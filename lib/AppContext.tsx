@@ -63,7 +63,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [linkedInUrl, setLinkedInUrl] = useState<string>('');
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const baseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
   const fetchTasks = useCallback(
     async (profileId: string, page = 1, pageSize = 10): Promise<TasksResponse | undefined> => {
