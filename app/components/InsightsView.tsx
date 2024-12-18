@@ -201,12 +201,12 @@ const handleDoneForNow = useCallback(async () => {
         <CardContent>
           <div className="space-y-4">
             <h3 className="text-lg font-semibold">Set Completed</h3>
-            <p>You've completed this set of questions. What would you like to do next?</p>
+            <p>You have completed this set of questions. What would you like to do next?</p>
             <div className="flex space-x-4">
               {hasMoreQuestions && (
                 <Button onClick={handleAnswerMoreQuestions}>Answer More Questions</Button>
               )}
-              <Button variant="outline" onClick={handleDoneForNow}>I'm Done for Now</Button>
+              <Button variant="outline" onClick={handleDoneForNow}>Done for Now</Button>
             </div>
           </div>
         </CardContent>
