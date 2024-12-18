@@ -77,7 +77,7 @@ Return ONLY a JSON array of questions with format:
     "category": "work-style|leadership|priorities|challenges|goals|professional-experiences"
 }`;
 
-        const generatedQuestions = await callClaude(prompt);
+const generatedQuestions = await callClaude(prompt, 'questions');
 
         return Array.isArray(generatedQuestions)
             ? generatedQuestions.map((q: any) => ({
@@ -111,5 +111,5 @@ export async function updateProfileWithAnswers(profileId: string, answers: { [qu
 export async function handleUserCompletion(profileId: string, answers: { [questionId: string]: string }) {
     await updateProfileWithAnswers(profileId, answers);
     return await callClaude(`Generate 5 professional development tasks based on these responses:
-${Object.entries(answers).map(([qId, ans]) => `${qId}: ${ans}`).join('\n')}`);
+        ${Object.entries(answers).map(([qId, ans]) => `${qId}: ${ans}`).join('\n')}`, 'tasks');
 }
