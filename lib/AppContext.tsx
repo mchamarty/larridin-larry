@@ -51,6 +51,32 @@ interface AppContextType {
   appendTasks: (newTasks: Task[]) => void;
 }
 
+const fetchWithRetry = async (url: string, options: any, retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          'Content-Type': 'application/json',
+          ...options?.headers,
+        }
+      });
+      if (response.ok) return response;
+      if (response.status === 404) throw new Error('Resource not found');
+      if (response.status === 504) {
+        if (i === retries - 1) throw new Error('Request timed out');
+        continue;
+      }
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Request failed');
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+    }
+  }
+  throw new Error('All retries failed');
+};
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -77,21 +103,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       try {
         const url = `${baseUrl}/api/fetch-tasks?profileId=${profileId}&page=${page}&pageSize=${pageSize}`;
-        const response = await fetch(url);
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to fetch tasks');
-        }
-
+        const response = await fetchWithRetry(url, {});
         const data: TasksResponse = await response.json();
+        
         setTasks((prevTasks) => 
           page === 1 ? data.tasks : [...prevTasks, ...data.tasks]
         );
         return data;
       } catch (error) {
         console.error('Error fetching tasks:', error);
-        setError('Failed to load tasks. Please try again.');
+        setError(error instanceof Error ? error.message : 'Failed to load tasks');
         return undefined;
       } finally {
         setTasksLoading(false);
@@ -111,20 +132,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setError(null);
   
       try {
-        const response = await fetch(`${baseUrl}/api/generate-tasks`, {
+        const response = await fetchWithRetry(`${baseUrl}/api/generate-tasks`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ profileId }),
         });
   
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.details || errorData.error || 'Failed to generate tasks');
-        }
-  
         const data: TasksResponse = await response.json();
         
-        // Ensure we have valid tasks before updating state
         if (data.tasks && Array.isArray(data.tasks)) {
           setTasks(prevTasks => [
             ...data.tasks.map(task => ({
@@ -155,16 +169,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setError(null);
 
       try {
-        const response = await fetch(`${baseUrl}/api/insights?profileId=${profileId}`);
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to fetch insights');
-        }
+        const response = await fetchWithRetry(`${baseUrl}/api/insights?profileId=${profileId}`, {});
         const data = await response.json();
         console.log('Fetched insights:', data);
       } catch (error) {
         console.error('Error fetching insights:', error);
-        setError('Failed to load insights. Please try again.');
+        setError(error instanceof Error ? error.message : 'Failed to load insights');
       } finally {
         setLoading(false);
       }
@@ -200,7 +210,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
-
 };
 
 export const useAppContext = (): AppContextType => {
@@ -210,4 +219,3 @@ export const useAppContext = (): AppContextType => {
   }
   return context;
 };
-
